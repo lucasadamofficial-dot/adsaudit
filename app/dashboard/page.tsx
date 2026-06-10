@@ -32,7 +32,7 @@ export default function DashboardPage() {
   const moduleScores  = (audit as AuditResult).modules ?? []
   const scoreHistory  = audit.scoreHistory  ?? []
   const overallScore  = audit.overallScore  ?? 0
-  const wastedSpend   = issues.reduce((s, i) => s + (i.estimatedSavings ?? 0), 0)
+  const wastedSpend   = issues.reduce((s, i) => s + (i.estimatedSaving ?? 0), 0)
   const criticalCount = issues.filter(i => i.severity === 'critical').length
   const highCount     = issues.filter(i => i.severity === 'high').length
 
