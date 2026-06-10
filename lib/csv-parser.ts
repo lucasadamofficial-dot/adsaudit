@@ -59,8 +59,6 @@ function col(row: CSVRow, ...terms: string[]): string {
   return ''
 }
 
-// ─── Report type detection ────────────────────────────────────────────────────
-
 export type ReportType = 'campaign' | 'keyword' | 'search_term' | 'ad' | 'unknown'
 
 function detectReportType(headers: string[]): ReportType {
@@ -71,8 +69,6 @@ function detectReportType(headers: string[]): ReportType {
   if (h.includes('campaign') || h.includes('budget')) return 'campaign'
   return 'unknown'
 }
-
-// ─── Main export ─────────────────────────────────────────────────────────────
 
 export interface ParseResult {
   result: Partial<AuditResult>
@@ -112,7 +108,7 @@ export function parseGoogleAdsCSV(csvText: string): ParseResult {
     accountName,
     overallScore,
     issues,
-    moduleScores,
+    modules: moduleScores,
     runAt: today.toISOString(),
     scoreHistory: [
       { date: monthAgo.toISOString().slice(0, 10), score: Math.min(overallScore + 12, 100) },
@@ -137,8 +133,8 @@ function analyzeCampaigns(rows: CSVRow[], issues: AuditIssue[], moduleScores: Mo
       id: `csv-c${id++}`, module: 'campaign' as AuditModule, severity: 'high' as Severity,
       title: `${zeroCv.length} campaign(s) spending with zero conversions`,
       description: `Campaigns with no conversions are wasting budget${names ? ': ' + names : ''}. Estimated monthly waste: $${Math.round(wasted)}.`,
-      recommendation: 'Pause or add a conversion goal. Check if conversion tracking is properly configured.',
-      estimatedSavings: Math.round(wasted * 100),
+      fix: 'Pause or add a conversion goal to each zero-conversion campaign. Check if conversion tracking is properly configured.',
+      estimatedSaving: Math.round(wasted * 100),
       affectedCount: zeroCv.length,
     })
     score -= 12
@@ -153,7 +149,7 @@ function analyzeCampaigns(rows: CSVRow[], issues: AuditIssue[], moduleScores: Mo
       id: `csv-c${id++}`, module: 'campaign' as AuditModule, severity: 'medium' as Severity,
       title: `${budgetLtd.length} campaign(s) limited by budget`,
       description: "These campaigns are hitting their daily cap — you're losing impressions and clicks.",
-      recommendation: 'Raise daily budget or improve QS to reduce CPCs so budget goes further.',
+      fix: 'Raise daily budget or improve QS to reduce CPCs so budget goes further.',
       affectedCount: budgetLtd.length,
     })
     score -= 6
@@ -165,26 +161,29 @@ function analyzeCampaigns(rows: CSVRow[], issues: AuditIssue[], moduleScores: Mo
       id: `csv-c${id++}`, module: 'ads' as AuditModule, severity: 'medium' as Severity,
       title: `${lowCTR.length} campaign(s) with CTR below 2%`,
       description: 'Low CTR signals poor ad relevance or weak copy for the targeted searches.',
-      recommendation: 'Rewrite ad headlines to match search intent. Add sitelinks, callouts and structured snippets.',
-      cvrLift: 18, affectedCount: lowCTR.length,
+      fix: 'Rewrite ad headlines to match search intent. Add sitelinks, callouts and structured snippets.',
+      estimatedCvrLift: 18,
+      affectedCount: lowCTR.length,
     })
     score -= 5
   }
 
-  moduleScores.push({ module: 'campaign' as AuditModule, score: Math.max(30, score), label: 'Campaign health' })
-    }
+  moduleScores.push({ module: 'campaign' as AuditModule, score: Math.max(30, score), label: 'Campaign health', issueCount: issues.length, passCount: 3 - issues.length })
+}
 
 function analyzeKeywords(rows: CSVRow[], issues: AuditIssue[], moduleScores: ModuleScore[]) {
-  let score = 82; let id = 100
+  let score = 82
+  let id = 100
 
   const lowQS = rows.filter(r => { const qs = cleanNum(col(r, 'quality score', 'qual. score', 'qual score')); return qs > 0 && qs <= 4 })
   if (lowQS.length > 0) {
     issues.push({
       id: `csv-k${id++}`, module: 'keywords' as AuditModule, severity: (lowQS.length > 10 ? 'high' : 'medium') as Severity,
-      title: `${lowQS.length} keyword(s) with Quality Score <= 4`,
-      description: 'Low QS keywords cost 25-400% more per click and get lower ad positions.',
-      recommendation: 'Improve landing page relevance and ad copy for these keywords, or pause them.',
-      estimatedSavings: lowQS.length * 3500, affectedCount: lowQS.length,
+      title: `${lowQS.length} keyword(s) with Quality Score ≤ 4`,
+      description: 'Low QS keywords cost 25–400% more per click and get lower ad positions.',
+      fix: 'Improve landing page relevance and ad copy for these keywords, or pause them to protect overall account QS.',
+      estimatedSaving: lowQS.length * 3500,
+      affectedCount: lowQS.length,
     })
     score -= Math.min(20, lowQS.length * 1.5)
   }
@@ -196,7 +195,7 @@ function analyzeKeywords(rows: CSVRow[], issues: AuditIssue[], moduleScores: Mod
       id: `csv-k${id++}`, module: 'keywords' as AuditModule, severity: 'high' as Severity,
       title: `${broad.length} broad match keywords (${Math.round(broad.length / totalWithMatch.length * 100)}% of total)`,
       description: 'High broad match ratio without Smart Bidding wastes significant budget on irrelevant queries.',
-      recommendation: 'Switch to phrase or exact match for most keywords. Only use broad match with Target CPA/ROAS.',
+      fix: 'Switch to phrase or exact match for most keywords. Only use broad match with Target CPA/ROAS.',
       affectedCount: broad.length,
     })
     score -= 15
@@ -208,7 +207,7 @@ function analyzeKeywords(rows: CSVRow[], issues: AuditIssue[], moduleScores: Mod
       id: `csv-k${id++}`, module: 'keywords' as AuditModule, severity: 'low' as Severity,
       title: `${zeroImpr.length} keyword(s) with zero impressions`,
       description: "These keywords aren't triggering ads. They may have bids below first page or be disapproved.",
-      recommendation: 'Review each: increase bids, broaden match type, or remove irrelevant keywords.',
+      fix: 'Review each: increase bids, broaden match type, or remove keywords that are never relevant.',
       affectedCount: zeroImpr.length,
     })
     score -= 4
@@ -220,18 +219,20 @@ function analyzeKeywords(rows: CSVRow[], issues: AuditIssue[], moduleScores: Mod
     issues.push({
       id: `csv-k${id++}`, module: 'keywords' as AuditModule, severity: 'high' as Severity,
       title: `${expensiveNoConv.length} expensive keyword(s) with no conversions`,
-      description: `High-CPC keywords (avg CPC > $5) with no conversions — ~$${Math.round(wasted)} in potentially wasted spend.`,
-      recommendation: 'Lower bids, tighten match type, or pause keywords that consistently spend without converting.',
-      estimatedSavings: Math.round(wasted * 100), affectedCount: expensiveNoConv.length,
+      description: `High-CPC keywords (avg CPC > $5) generating no conversions — ~$${Math.round(wasted)} in potentially wasted spend.`,
+      fix: 'Lower bids, tighten match type, or pause keywords that consistently spend without converting.',
+      estimatedSaving: Math.round(wasted * 100),
+      affectedCount: expensiveNoConv.length,
     })
     score -= 10
   }
 
-  moduleScores.push({ module: 'keywords' as AuditModule, score: Math.max(20, score), label: 'Keywords' })
+  moduleScores.push({ module: 'keywords' as AuditModule, score: Math.max(20, score), label: 'Keywords', issueCount: issues.length, passCount: 4 - issues.length })
 }
 
 function analyzeSearchTerms(rows: CSVRow[], issues: AuditIssue[], moduleScores: ModuleScore[]) {
-  let score = 75; let id = 200
+  let score = 75
+  let id = 200
 
   const irrelevant = rows.filter(r => cleanNum(col(r, 'conv')) === 0 && cleanNum(col(r, 'cost', 'spend')) > 10 && col(r, 'match type').toLowerCase() !== 'exact')
   if (irrelevant.length > 0) {
@@ -239,9 +240,10 @@ function analyzeSearchTerms(rows: CSVRow[], issues: AuditIssue[], moduleScores: 
     issues.push({
       id: `csv-s${id++}`, module: 'keywords' as AuditModule, severity: 'critical' as Severity,
       title: `${irrelevant.length} search terms spending budget without converting`,
-      description: `These non-converting search terms represent ~$${Math.round(wasted)} in wasted spend.`,
-      recommendation: 'Add the worst offenders as negative keywords immediately. Review weekly.',
-      estimatedSavings: Math.round(wasted * 100), affectedCount: irrelevant.length,
+      description: `These triggered-but-non-converting search terms represent ~$${Math.round(wasted)} in wasted spend.`,
+      fix: 'Add the worst offenders as negative keywords immediately. Review weekly to catch new ones.',
+      estimatedSaving: Math.round(wasted * 100),
+      affectedCount: irrelevant.length,
     })
     score -= 25
   }
@@ -252,13 +254,14 @@ function analyzeSearchTerms(rows: CSVRow[], issues: AuditIssue[], moduleScores: 
       id: `csv-s${id++}`, module: 'ads' as AuditModule, severity: 'medium' as Severity,
       title: `${lowCTR.length} search term(s) with CTR below 1%`,
       description: "Very low CTR means your ads aren't relevant to what users are searching for.",
-      recommendation: 'Create dedicated ad groups and tailored ad copy for your highest-volume search terms.',
-      cvrLift: 22, affectedCount: lowCTR.length,
+      fix: 'Create dedicated ad groups and tailored ad copy for your highest-volume search terms.',
+      estimatedCvrLift: 22,
+      affectedCount: lowCTR.length,
     })
     score -= 8
   }
 
-  moduleScores.push({ module: 'keywords' as AuditModule, score: Math.max(20, score), label: 'Keywords' })
+  moduleScores.push({ module: 'keywords' as AuditModule, score: Math.max(20, score), label: 'Keywords', issueCount: issues.length, passCount: 2 - issues.length })
 }
 
 function analyzeGeneric(rows: CSVRow[], issues: AuditIssue[], moduleScores: ModuleScore[]) {
@@ -266,8 +269,8 @@ function analyzeGeneric(rows: CSVRow[], issues: AuditIssue[], moduleScores: Modu
     id: 'csv-generic-1', module: 'campaign' as AuditModule, severity: 'low' as Severity,
     title: 'CSV uploaded — upload a specific report for deeper analysis',
     description: `Parsed ${rows.length} rows. For richer results, upload a Campaigns, Keywords, or Search Terms report.`,
-    recommendation: 'In Google Ads: Reports → Predefined Reports → select Campaigns, Keywords, or Search Terms → Download as CSV.',
+    fix: 'In Google Ads: Reports → Predefined Reports → select Campaigns, Keywords, or Search Terms → Download as CSV.',
     affectedCount: rows.length,
   })
-  moduleScores.push({ module: 'campaign' as AuditModule, score: 70, label: 'Campaign health' })
+  moduleScores.push({ module: 'campaign' as AuditModule, score: 70, label: 'Campaign health', issueCount: 1, passCount: 0 })
 }
